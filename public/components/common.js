@@ -83,7 +83,8 @@ export function relativeTime(ts) {
 // ── API helper ────────────────────────────────────────────────────────────────
 
 // Auto-detect base path for API calls (handles reverse proxy subpath like /swarmboard)
-const BASE_PATH = window.location.pathname.replace(/\/(index\.html)?$/, '').replace(/\/+$/, '');
+// Use document.baseURI which respects the <base> tag we set in index.html
+const BASE_PATH = new URL(document.baseURI).pathname.replace(/\/+$/, '');
 
 export async function apiFetch(method, path, body) {
   const opts = {
