@@ -164,8 +164,8 @@ function runMigrations(db) {
     db.exec('ALTER TABLE projects ADD COLUMN tags TEXT');
   }
   if (!cols.includes('updated_at')) {
-    db.exec("ALTER TABLE projects ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))");
-    db.exec("UPDATE projects SET updated_at = created_at WHERE updated_at IS NULL");
+    db.exec("ALTER TABLE projects ADD COLUMN updated_at TEXT");
+    db.exec("UPDATE projects SET updated_at = COALESCE(created_at, datetime('now'))");
   }
 }
 
