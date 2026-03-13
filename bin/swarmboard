@@ -62,14 +62,14 @@ function truncate(s, n = 80) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
-// ─── Projects ─────────────────────────────────────────────────────────────────
+// ─── Programs ─────────────────────────────────────────────────────────────────
 
 program
   .name('swarmboard')
-  .description('Pulse — project status tracker CLI')
-  .version('1.0.0')
+  .description('Swarmboard — project & task tracker CLI')
+  .version('2.0.0')
   .option('--json', 'Output raw JSON')
-  .option('--url <url>', 'Pulse server URL', DEFAULT_URL);
+  .option('--url <url>', 'Swarmboard server URL', DEFAULT_URL);
 
 program.hook('preAction', (thisCommand) => {
   const root = thisCommand.parent || thisCommand;
@@ -77,15 +77,23 @@ program.hook('preAction', (thisCommand) => {
   if (opts.url) process.env.SWARMBOARD_URL = opts.url;
 });
 
+// ─── Projects ─────────────────────────────────────────────────────────────────
+
 // list
 program
   .command('list')
   .alias('ls')
   .description('List all projects')
   .option('--archived', 'Include archived projects')
+  .option('--status <status>', 'Filter by status: active, paused, completed, archived')
+  .option('--tag <tag>', 'Filter by tag')
   .option('--json', 'Raw JSON output')
   .action(async (opts) => {
-    const q = opts.archived ? '?archived=true' : '';
+    const params = new URLSearchParams();
+    if (opts.archived) params.set('archived', 'true');
+    if (opts.status)   params.set('status', opts.status);
+    if (opts.tag)      params.set('tag', opts.tag);
+    const q = params.toString() ? `?${params}` : '';
     const projects = await api('GET', `/projects${q}`);
     if (opts.json || program.opts().json) return print(projects);
 
@@ -93,14 +101,13 @@ program
       console.log('No projects.');
       return;
     }
-    console.log(`${'ID'.padEnd(28)} ${'NAME'.padEnd(24)} ${'LATEST STATUS'.padEnd(50)} UPDATED`);
-    console.log('─'.repeat(120));
+    console.log(`${'ID'.padEnd(28)} ${'NAME'.padEnd(22)} ${'STATUS'.padEnd(12)} ${'TASKS'.padEnd(10)} UPDATED`);
+    console.log('─'.repeat(100));
     for (const p of projects) {
-      const archived = p.archived ? ' [archived]' : '';
-      const status = truncate(p.latest_status || '—', 50);
-      const updated = p.latest_at ? fmtDate(p.latest_at) : fmtDate(p.created_at);
+      const tasks = p.task_counts ? `${p.task_counts.completed||0}/${p.task_counts.total||0}` : '—';
+      const updated = p.updated_at ? fmtDate(p.updated_at) : fmtDate(p.created_at);
       console.log(
-        `${(p.id + archived).padEnd(28)} ${p.name.padEnd(24)} ${status.padEnd(50)} ${updated}`
+        `${p.id.padEnd(28)} ${p.name.padEnd(22)} ${(p.status||'active').padEnd(12)} ${tasks.padEnd(10)} ${updated}`
       );
     }
   });
@@ -110,13 +117,22 @@ program
   .command('create <name> [description]')
   .description('Create a new project')
   .option('--id <id>', 'Custom project ID (slug)')
+  .option('--repo <url>', 'Git repository URL')
+  .option('--tags <tags>', 'Comma-separated tags')
+  .option('--start-date <date>', 'Start date (ISO)')
+  .option('--status <status>', 'Initial status', 'active')
   .option('--json', 'Raw JSON output')
   .action(async (name, description, opts) => {
-    const project = await api('POST', '/projects', { name, description, id: opts.id });
+    const body = { name, description, id: opts.id, status: opts.status };
+    if (opts.repo)      body.repo = opts.repo;
+    if (opts.tags)      body.tags = opts.tags.split(',').map(t => t.trim());
+    if (opts.startDate) body.start_date = opts.startDate;
+    const project = await api('POST', '/projects', body);
     if (opts.json || program.opts().json) return print(project);
     console.log(`Created project: ${project.id}`);
     console.log(`  Name: ${project.name}`);
     if (project.description) console.log(`  Desc: ${project.description}`);
+    if (project.repo)        console.log(`  Repo: ${project.repo}`);
   });
 
 // get
@@ -128,23 +144,31 @@ program
     const project = await api('GET', `/projects/${id}`);
     if (opts.json || program.opts().json) return print(project);
     console.log(`${project.name} (${project.id})`);
-    if (project.description) console.log(`  ${project.description}`);
-    if (project.archived) console.log('  [ARCHIVED]');
+    if (project.description)  console.log(`  ${project.description}`);
+    if (project.repo)         console.log(`  Repo: ${project.repo}`);
+    if (project.status)       console.log(`  Status: ${project.status}`);
+    if (project.start_date)   console.log(`  Started: ${project.start_date}`);
+    if (project.archived)     console.log('  [ARCHIVED]');
+    if (Array.isArray(project.tags) && project.tags.length) {
+      console.log(`  Tags: ${project.tags.join(', ')}`);
+    }
     if (project.members?.length) {
       console.log(`  Members: ${project.members.map(m => `${m.member_name} (${m.role})`).join(', ')}`);
+    }
+    if (project.task_counts) {
+      const tc = project.task_counts;
+      console.log(`  Tasks: ${tc.total||0} total (${tc.todo||0} todo, ${tc.in_progress||0} in progress, ${tc.completed||0} done)`);
     }
     if (project.latest_status) {
       console.log(`  Latest: "${project.latest_status.status_text}"`);
       console.log(`    by ${project.latest_status.author} at ${fmtDate(project.latest_status.created_at)}`);
-    } else {
-      console.log('  No status updates yet.');
     }
   });
 
-// update (post status)
+// update (post status — legacy compat)
 program
   .command('update <id> [text...]')
-  .description('Post a status update')
+  .description('Post a status update (legacy)')
   .option('--author <author>', 'Author name (default: $USER)')
   .option('--json', 'Raw JSON output')
   .action(async (id, textParts, opts) => {
@@ -156,10 +180,10 @@ program
     console.log(`[${fmtDate(update.created_at)}] ${author}: ${text}`);
   });
 
-// history
+// history (legacy compat)
 program
   .command('history <id>')
-  .description('Show status history for a project')
+  .description('Show status history for a project (legacy)')
   .option('--limit <n>', 'Max entries', '20')
   .option('--json', 'Raw JSON output')
   .action(async (id, opts) => {
@@ -190,11 +214,19 @@ program
   .description('Edit project metadata')
   .option('--name <name>', 'New name')
   .option('--description <desc>', 'New description')
+  .option('--repo <url>', 'Git URL')
+  .option('--status <status>', 'Status: active, paused, completed, archived')
+  .option('--tags <tags>', 'Comma-separated tags')
+  .option('--start-date <date>', 'Start date (ISO)')
   .option('--json', 'Raw JSON output')
   .action(async (id, opts) => {
     const body = {};
     if (opts.name)        body.name = opts.name;
     if (opts.description) body.description = opts.description;
+    if (opts.repo)        body.repo = opts.repo;
+    if (opts.status)      body.status = opts.status;
+    if (opts.tags)        body.tags = opts.tags.split(',').map(t => t.trim());
+    if (opts.startDate)   body.start_date = opts.startDate;
     const project = await api('PUT', `/projects/${id}`, body);
     if (opts.json || program.opts().json) return print(project);
     console.log(`Updated: ${project.id} — ${project.name}`);
@@ -230,6 +262,222 @@ members
     const mems = await api('GET', `/projects/${projectId}/members`);
     if (opts.json) return print(mems);
     for (const m of mems) console.log(`  ${m.member_name.padEnd(24)} ${m.role}`);
+  });
+
+// ─── Tasks ────────────────────────────────────────────────────────────────────
+
+const task = program.command('task').description('Manage tasks');
+
+// task add <project-id> 'title'
+task
+  .command('add <project-id> <title>')
+  .description('Create a new task')
+  .option('--desc <text>', 'Task description')
+  .option('--assign <names>', 'Comma-separated assignees')
+  .option('--priority <p>', 'Priority: low, medium, high, critical', 'medium')
+  .option('--parent <id>', 'Parent task ID (for sub-tasks)')
+  .option('--notes <text>', 'Initial notes')
+  .option('--deliverables <text>', 'Deliverables description')
+  .option('--json', 'Raw JSON output')
+  .action(async (projectId, title, opts) => {
+    const body = { title, priority: opts.priority };
+    if (opts.desc)         body.description = opts.desc;
+    if (opts.notes)        body.notes = opts.notes;
+    if (opts.deliverables) body.deliverables = opts.deliverables;
+    if (opts.parent)       body.parent_task_id = parseInt(opts.parent);
+    if (opts.assign) {
+      body.assignees = opts.assign.split(',').map(n => n.trim());
+    }
+    const t = await api('POST', `/projects/${projectId}/tasks`, body);
+    if (opts.json || program.opts().json) return print(t);
+    console.log(`Created task #${t.id}: ${t.title}`);
+    console.log(`  Status: ${t.status}  Priority: ${t.priority}`);
+    if (t.assignees?.length) console.log(`  Assignees: ${t.assignees.map(a => a.assignee).join(', ')}`);
+  });
+
+// task list <project-id>
+task
+  .command('list <project-id>')
+  .alias('ls')
+  .description('List tasks in a project')
+  .option('--status <s>', 'Filter by status (comma-separated): todo,in_progress,in_review,completed,blocked')
+  .option('--assignee <name>', 'Filter by assignee')
+  .option('--priority <p>', 'Filter by priority')
+  .option('--json', 'Raw JSON output')
+  .action(async (projectId, opts) => {
+    const params = new URLSearchParams();
+    if (opts.status)   params.set('status', opts.status);
+    if (opts.assignee) params.set('assignee', opts.assignee);
+    if (opts.priority) params.set('priority', opts.priority);
+    const q = params.toString() ? `?${params}` : '';
+    const tasks = await api('GET', `/projects/${projectId}/tasks${q}`);
+    if (opts.json || program.opts().json) return print(tasks);
+    if (!tasks.length) { console.log('No tasks.'); return; }
+    console.log(`${'#'.padEnd(6)} ${'TITLE'.padEnd(40)} ${'STATUS'.padEnd(14)} ${'PRIORITY'.padEnd(10)} ASSIGNEES`);
+    console.log('─'.repeat(95));
+    for (const t of tasks) {
+      const assignees = t.assignees?.map(a => a.assignee).join(', ') || '—';
+      console.log(
+        `${String(t.id).padEnd(6)} ${truncate(t.title, 40).padEnd(40)} ${t.status.padEnd(14)} ${t.priority.padEnd(10)} ${assignees}`
+      );
+    }
+  });
+
+// task get <task-id>
+task
+  .command('get <task-id>')
+  .description('Get task details')
+  .option('--json', 'Raw JSON output')
+  .action(async (taskId, opts) => {
+    const t = await api('GET', `/tasks/${taskId}`);
+    if (opts.json || program.opts().json) return print(t);
+    console.log(`Task #${t.id}: ${t.title}`);
+    console.log(`  Project:  ${t.project_id}`);
+    console.log(`  Status:   ${t.status}`);
+    console.log(`  Priority: ${t.priority}`);
+    if (t.description)   console.log(`  Desc:     ${t.description}`);
+    if (t.notes)         console.log(`  Notes:    ${t.notes}`);
+    if (t.deliverables)  console.log(`  Delivers: ${t.deliverables}`);
+    if (t.assignees?.length) console.log(`  Assignees: ${t.assignees.map(a => `${a.assignee} (${a.role})`).join(', ')}`);
+    if (Array.isArray(t.pr_urls) && t.pr_urls.length) console.log(`  PRs: ${t.pr_urls.join(', ')}`);
+    if (t.sub_tasks?.length) {
+      console.log(`  Sub-tasks (${t.sub_tasks.length}):`);
+      for (const s of t.sub_tasks) {
+        console.log(`    #${s.id} [${s.status}] ${s.title}`);
+      }
+    }
+    if (t.activity?.length) {
+      console.log(`  Recent activity:`);
+      for (const a of t.activity.slice(0, 5)) {
+        console.log(`    [${fmtDate(a.created_at)}] ${a.author} — ${a.action}: ${truncate(a.detail, 60)}`);
+      }
+    }
+  });
+
+// task update <task-id>
+task
+  .command('update <task-id>')
+  .description('Update a task')
+  .option('--status <s>', 'New status: todo, in_progress, in_review, completed, blocked')
+  .option('--priority <p>', 'New priority')
+  .option('--title <t>', 'New title')
+  .option('--desc <text>', 'New description')
+  .option('--notes <text>', 'New notes')
+  .option('--deliverables <text>', 'New deliverables')
+  .option('--pr <url>', 'Add PR URL')
+  .option('--author <name>', 'Author for activity log', process.env.USER || 'unknown')
+  .option('--json', 'Raw JSON output')
+  .action(async (taskId, opts) => {
+    const t = opts.json || program.opts().json ? await api('GET', `/tasks/${taskId}`) : null;
+    const body = { author: opts.author };
+    if (opts.status)       body.status = opts.status;
+    if (opts.priority)     body.priority = opts.priority;
+    if (opts.title)        body.title = opts.title;
+    if (opts.desc)         body.description = opts.desc;
+    if (opts.notes)        body.notes = opts.notes;
+    if (opts.deliverables) body.deliverables = opts.deliverables;
+    if (opts.pr) {
+      // Fetch current PRs and append
+      const current = await api('GET', `/tasks/${taskId}`);
+      const urls = Array.isArray(current.pr_urls) ? current.pr_urls : [];
+      if (!urls.includes(opts.pr)) urls.push(opts.pr);
+      body.pr_urls = urls;
+    }
+    const updated = await api('PUT', `/tasks/${taskId}`, body);
+    if (opts.json || program.opts().json) return print(updated);
+    console.log(`Updated task #${updated.id}: ${updated.title} [${updated.status}]`);
+  });
+
+// task done <task-id>
+task
+  .command('done <task-id>')
+  .description('Mark task as completed')
+  .option('--author <name>', 'Author for activity log', process.env.USER || 'unknown')
+  .action(async (taskId, opts) => {
+    const updated = await api('PUT', `/tasks/${taskId}/status`, { status: 'completed', author: opts.author });
+    console.log(`Task #${updated.id} completed: ${updated.title}`);
+  });
+
+// task assign <task-id> <name>
+task
+  .command('assign <task-id> <name>')
+  .description('Add an assignee to a task')
+  .option('--role <role>', 'Role: assignee, reviewer, watcher', 'assignee')
+  .action(async (taskId, name, opts) => {
+    const assignees = await api('POST', `/tasks/${taskId}/assign`, { assignee: name, role: opts.role });
+    console.log(`Assigned ${name} (${opts.role}) to task #${taskId}`);
+    console.log(`  Assignees: ${assignees.map(a => `${a.assignee} (${a.role})`).join(', ')}`);
+  });
+
+// task unassign <task-id> <name>
+task
+  .command('unassign <task-id> <name>')
+  .description('Remove an assignee from a task')
+  .action(async (taskId, name) => {
+    await api('DELETE', `/tasks/${taskId}/assign/${encodeURIComponent(name)}`);
+    console.log(`Removed ${name} from task #${taskId}`);
+  });
+
+// task comment <task-id> <author> 'text'
+task
+  .command('comment <task-id> <author> <text>')
+  .description('Post a comment on a task')
+  .option('--json', 'Raw JSON output')
+  .action(async (taskId, author, text, opts) => {
+    const entry = await api('POST', `/tasks/${taskId}/activity`, { author, action: 'comment', detail: text });
+    if (opts.json || program.opts().json) return print(entry);
+    console.log(`[${fmtDate(entry.created_at)}] ${author}: ${text}`);
+  });
+
+// ─── Activity ─────────────────────────────────────────────────────────────────
+
+program
+  .command('activity')
+  .description('Show activity feed')
+  .option('--project <id>', 'Filter by project')
+  .option('--author <name>', 'Filter by author')
+  .option('--action <type>', 'Filter by action type')
+  .option('--limit <n>', 'Max entries', '20')
+  .option('--json', 'Raw JSON output')
+  .action(async (opts) => {
+    const params = new URLSearchParams();
+    if (opts.project) params.set('project', opts.project);
+    if (opts.author)  params.set('author', opts.author);
+    if (opts.action)  params.set('action', opts.action);
+    params.set('limit', opts.limit);
+    const q = `?${params}`;
+
+    const endpoint = opts.project ? `/projects/${opts.project}/activity${q}` : `/activity${q}`;
+    const activity = await api('GET', endpoint);
+    if (opts.json || program.opts().json) return print(activity);
+    if (!activity.length) { console.log('No activity.'); return; }
+    for (const a of activity) {
+      const taskRef = a.task_id ? ` [task #${a.task_id}]` : '';
+      console.log(`[${fmtDate(a.created_at)}] ${a.author}${taskRef} — ${a.action}: ${truncate(a.detail, 80)}`);
+    }
+  });
+
+// ─── Search ───────────────────────────────────────────────────────────────────
+
+program
+  .command('search <query>')
+  .description('Full-text search across projects and tasks')
+  .option('--type <type>', 'Filter by type: project, task')
+  .option('--status <s>', 'Filter by status')
+  .option('--json', 'Raw JSON output')
+  .action(async (query, opts) => {
+    const params = new URLSearchParams({ q: query });
+    if (opts.type)   params.set('type', opts.type);
+    if (opts.status) params.set('status', opts.status);
+    const results = await api('GET', `/search?${params}`);
+    if (opts.json || program.opts().json) return print(results);
+    if (!results.length) { console.log('No results.'); return; }
+    console.log(`Found ${results.length} result(s):\n`);
+    for (const r of results) {
+      const ref = r.entity_type === 'task' ? `task #${r.entity_id}` : `project ${r.entity_id}`;
+      console.log(`  [${r.entity_type}] ${ref}: ${r.title}`);
+      if (r.snippet) console.log(`    ${r.snippet.replace(/<\/?mark>/g, '*')}`);
+    }
   });
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────
@@ -368,7 +616,6 @@ hooks
     }
   });
 
-// swarmboard hooks subscribe <project-id> <hook-id>
 hooks
   .command('subscribe <project-id> <hook-id>')
   .description('Subscribe a project to a hook')
@@ -382,7 +629,6 @@ hooks
     console.log(`Subscribed ${projectId} → ${hookId}${filter}`);
   });
 
-// swarmboard hooks unsubscribe <project-id> <hook-id>
 hooks
   .command('unsubscribe <project-id> <hook-id>')
   .description('Unsubscribe a project from a hook')
@@ -391,7 +637,6 @@ hooks
     console.log(`Unsubscribed ${projectId} from ${hookId}`);
   });
 
-// swarmboard hooks subscriptions <project-id>
 hooks
   .command('subscriptions <project-id>')
   .description('List hook subscriptions for a project')
@@ -407,8 +652,6 @@ hooks
     }
   });
 
-// ─── OpenClaw integration ─────────────────────────────────────────────────────
-
 hooks
   .command('add-openclaw')
   .description('Create a Pulse hook that routes through OpenClaw')
@@ -422,7 +665,6 @@ hooks
   .option('--token <token>', 'Bearer token for OpenClaw hooks (auto-detected from config)')
   .option('--json', 'Raw JSON output')
   .action(async (opts) => {
-    // 1. Read openclaw.json if available
     let openclawPort = opts.openclawPort ? parseInt(opts.openclawPort) : 18789;
     let token = opts.token || '';
 
@@ -438,7 +680,6 @@ hooks
       }
     }
 
-    // 2. Build the hook
     const hookId = `notify-${opts.channel}-${opts.agent}`;
     const hookUrl = `http://localhost:${openclawPort}/hooks/pulse`;
     const bodyTemplate = JSON.stringify({
@@ -453,29 +694,16 @@ hooks
 
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-    // 3. Create/update the hook in Pulse
     try {
       await api('POST', '/hooks', {
-        id: hookId,
-        name: opts.name,
-        url: hookUrl,
-        method: 'POST',
-        headers,
-        body_template: bodyTemplate
+        id: hookId, name: opts.name, url: hookUrl, method: 'POST', headers, body_template: bodyTemplate
       });
     } catch (_) {
-      // If it already exists, update it
-      await api('PUT', `/hooks/${hookId}`, {
-        name: opts.name,
-        url: hookUrl,
-        headers,
-        body_template: bodyTemplate
-      });
+      await api('PUT', `/hooks/${hookId}`, { name: opts.name, url: hookUrl, headers, body_template: bodyTemplate });
     }
     console.log(`Created/updated Pulse hook: ${hookId}`);
     console.log(`  → ${hookUrl}`);
 
-    // 4. Add the openclaw.json mapping (if config exists)
     if (fs.existsSync(configPath)) {
       try {
         const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -483,9 +711,7 @@ hooks
         if (!cfg.hooks.mappings) cfg.hooks.mappings = [];
 
         const PULSE_MATCH = { path: 'swarmboard' };
-        const existing = cfg.hooks.mappings.find(
-          m => m.match?.path === 'swarmboard'
-        );
+        const existing = cfg.hooks.mappings.find(m => m.match?.path === 'swarmboard');
 
         if (!existing) {
           cfg.hooks.mappings.push({
@@ -511,24 +737,6 @@ hooks
       } catch (e) {
         console.warn(`Warning: could not update ${configPath}: ${e.message}`);
       }
-    } else {
-      console.log(`Note: ${configPath} not found — skipping openclaw.json update`);
-      console.log('Add this mapping to your openclaw.json hooks.mappings manually:');
-      console.log(JSON.stringify({
-        match: { path: 'swarmboard' },
-        action: 'agent',
-        wakeMode: 'now',
-        name: 'Pulse Notification',
-        agentId: '{{payload.agentId}}',
-        sessionKey: 'hook:pulse-notify',
-        messageTemplate:
-          'Deliver this project status notification using the message tool.\n\n' +
-          'Project: {{payload.project}}\nAuthor: {{payload.author}}\nUpdate: {{payload.text}}\n\n' +
-          'Send to channel={{payload.channel}}, accountId={{payload.accountId}}, target={{payload.target}}.\n' +
-          'After sending, reply NO_REPLY.',
-        deliver: false,
-        model: opts.model
-      }, null, 2));
     }
   });
 
@@ -541,7 +749,7 @@ program
   .action(async (opts) => {
     const health = await api('GET', '/health');
     if (opts.json) return print(health);
-    console.log(`Pulse server at ${getBaseUrl()} — ${health.status} (${health.timestamp})`);
+    console.log(`Swarmboard server at ${getBaseUrl()} — ${health.status} (${health.timestamp})`);
   });
 
 // ─── Run ──────────────────────────────────────────────────────────────────────
