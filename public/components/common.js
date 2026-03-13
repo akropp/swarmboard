@@ -82,13 +82,16 @@ export function relativeTime(ts) {
 
 // ── API helper ────────────────────────────────────────────────────────────────
 
+// Auto-detect base path for API calls (handles reverse proxy subpath like /swarmboard)
+const BASE_PATH = window.location.pathname.replace(/\/(index\.html)?$/, '').replace(/\/+$/, '');
+
 export async function apiFetch(method, path, body) {
   const opts = {
     method,
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' }
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(path, opts);
+  const res = await fetch(BASE_PATH + path, opts);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || `HTTP ${res.status}`);
