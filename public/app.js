@@ -1,5 +1,4 @@
-import { html, render } from 'https://esm.sh/htm/preact/standalone';
-import { useState, useEffect } from 'https://esm.sh/preact/hooks';
+import { html, render, useState, useEffect } from 'https://esm.sh/htm/preact/standalone';
 import { NavBar } from './components/common.js';
 import { Dashboard } from './components/dashboard.js';
 import { ProjectDetail } from './components/project.js';

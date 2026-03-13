@@ -1,5 +1,4 @@
-import { html } from 'https://esm.sh/htm/preact/standalone';
-import { useState, useEffect } from 'https://esm.sh/preact/hooks';
+import { html, useState, useEffect } from 'https://esm.sh/htm/preact/standalone';
 import { StatusBadge, PriorityBadge, Spinner, ErrorAlert, relativeTime, apiFetch } from './common.js';
 
 export function TaskDetailModal({ taskId, onClose, onUpdated }) {

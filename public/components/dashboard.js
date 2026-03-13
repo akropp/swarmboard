@@ -1,5 +1,4 @@
-import { html } from 'https://esm.sh/htm/preact/standalone';
-import { useState, useEffect } from 'https://esm.sh/preact/hooks';
+import { html, useState, useEffect } from 'https://esm.sh/htm/preact/standalone';
 import { StatusBadge, Spinner, ErrorAlert, EmptyState, relativeTime, apiFetch } from './common.js';
 
 export function Dashboard({ onNavigate }) {

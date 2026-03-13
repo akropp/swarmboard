@@ -4,17 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Swarmboard</title>
-<script>
-  // Set <base> to ensure relative imports resolve correctly behind reverse proxies
-  // e.g. /swarmboard → base href="/swarmboard/"
-  (function() {
-    var p = window.location.pathname;
-    if (!p.endsWith('/')) p += '/';
-    var b = document.createElement('base');
-    b.href = p;
-    document.head.appendChild(b);
-  })();
-</script>
+
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
@@ -48,6 +38,10 @@
 </head>
 <body>
 <div id="app"></div>
-<script type="module" src="./app.js"></script>
+<script type="module">
+  // Resolve base path for reverse proxy (e.g. /swarmboard)
+  const base = window.location.pathname.replace(/\/?$/, '/');
+  const { default: init } = await import(base + 'app.js');
+</script>
 </body>
 </html>

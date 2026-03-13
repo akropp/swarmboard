@@ -1,5 +1,4 @@
-import { html } from 'https://esm.sh/htm/preact/standalone';
-import { useState, useEffect } from 'https://esm.sh/preact/hooks';
+import { html, useState, useEffect } from 'https://esm.sh/htm/preact/standalone';
 import { Spinner, ErrorAlert, EmptyState, relativeTime, apiFetch } from './common.js';
 
 const ACTION_ICONS = {
