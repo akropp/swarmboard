@@ -15,6 +15,7 @@ export function ProjectDetail({ projectId, onNavigate }) {
   const [showAddTask, setShowAddTask] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
   const [editingProject, setEditingProject] = useState(false);
+  const [selectedDoc, setSelectedDoc] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -104,6 +105,24 @@ export function ProjectDetail({ projectId, onNavigate }) {
             </div>
           </div>
         </div>
+
+        <!-- Documents section -->
+        ${project.documents?.length > 0 && html`
+          <div class="bg-card border border-border rounded-xl p-5 mb-6">
+            <h2 class="text-base font-semibold mb-3 flex items-center gap-2">
+              📄 Documents
+              <span class="text-xs text-muted font-normal">(${project.documents.length})</span>
+            </h2>
+            <div class="space-y-2">
+              ${project.documents.map(d => html`
+                <${DocumentItem} key=${d.id} doc=${d} onView=${async () => {
+                  const full = await apiFetch('GET', '/docs/' + d.id);
+                  setSelectedDoc(full);
+                }} />
+              `)}
+            </div>
+          </div>
+        `}
 
         <!-- Tasks section -->
         <div class="flex gap-6">
@@ -197,6 +216,14 @@ export function ProjectDetail({ projectId, onNavigate }) {
           project=${project}
           onClose=${() => setEditingProject(false)}
           onSaved=${(p) => { setProject(p); setEditingProject(false); }}
+        />
+      `}
+
+      <!-- Document viewer modal -->
+      ${selectedDoc && html`
+        <${DocumentViewerModal}
+          doc=${selectedDoc}
+          onClose=${() => setSelectedDoc(null)}
         />
       `}
     </div>
@@ -464,6 +491,72 @@ function EditProjectModal({ project, onClose, onSaved }) {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  `;
+}
+
+// ── Document components ───────────────────────────────────────────────────────
+
+function DocumentItem({ doc, onView }) {
+  return html`
+    <div class="flex items-center justify-between p-3 bg-bg rounded-lg border border-border hover:border-gray-500 cursor-pointer transition-colors"
+         onclick=${onView}>
+      <div class="flex items-center gap-2">
+        <span class="text-muted">📄</span>
+        <span class="text-sm font-medium">${doc.title}</span>
+      </div>
+      <div class="text-xs text-muted">
+        ${doc.author ? `${doc.author} · ` : ''}${relativeTime(doc.created_at)}
+      </div>
+    </div>
+  `;
+}
+
+function DocumentViewerModal({ doc, onClose }) {
+  // Simple markdown rendering: headers, bold, italic, code blocks, links, lists
+  function renderMarkdown(md) {
+    if (!md) return '';
+    return md
+      // Code blocks (fenced)
+      .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-gray-900 border border-border rounded-lg p-4 my-3 overflow-x-auto text-sm"><code>$2</code></pre>')
+      // Inline code
+      .replace(/`([^`]+)`/g, '<code class="bg-gray-800 px-1.5 py-0.5 rounded text-sm text-accent">$1</code>')
+      // Headers
+      .replace(/^#### (.+)$/gm, '<h4 class="text-base font-semibold mt-4 mb-2">$1</h4>')
+      .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold mt-5 mb-2">$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold mt-6 mb-3">$1</h2>')
+      .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold mt-6 mb-3">$1</h1>')
+      // Bold + italic
+      .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      // Links
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-accent hover:underline">$1</a>')
+      // Unordered lists
+      .replace(/^- (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+      // Horizontal rules
+      .replace(/^---$/gm, '<hr class="border-border my-4">')
+      // Line breaks → paragraphs
+      .replace(/\n\n/g, '</p><p class="mb-2">')
+      .replace(/\n/g, '<br>');
+  }
+
+  return html`
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onclick=${e => e.target === e.currentTarget && onClose()}>
+      <div class="bg-card border border-border rounded-xl w-full max-w-3xl max-h-[85vh] shadow-2xl flex flex-col">
+        <div class="flex items-center justify-between p-5 border-b border-border">
+          <div>
+            <h2 class="text-lg font-semibold">${doc.title}</h2>
+            <p class="text-xs text-muted mt-0.5">
+              ${doc.author ? `By ${doc.author} · ` : ''}${doc.content_type || 'markdown'} · ${relativeTime(doc.created_at)}
+            </p>
+          </div>
+          <button onclick=${onClose} class="text-muted hover:text-white text-xl px-2">✕</button>
+        </div>
+        <div class="p-6 overflow-y-auto prose-invert text-sm leading-relaxed"
+             dangerouslySetInnerHTML=${{ __html: '<p class="mb-2">' + renderMarkdown(doc.content) + '</p>' }}>
+        </div>
       </div>
     </div>
   `;

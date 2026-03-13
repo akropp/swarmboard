@@ -126,6 +126,23 @@ function initSchema(db) {
 
     CREATE INDEX IF NOT EXISTS idx_activity_project ON activity_log(project_id);
     CREATE INDEX IF NOT EXISTS idx_activity_task ON activity_log(task_id);
+
+    -- ── Documents (attachable to projects or tasks) ──────────────────────────
+
+    CREATE TABLE IF NOT EXISTS documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT REFERENCES projects(id),
+      task_id INTEGER REFERENCES tasks(id),
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      content_type TEXT DEFAULT 'markdown',
+      author TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_docs_project ON documents(project_id);
+    CREATE INDEX IF NOT EXISTS idx_docs_task ON documents(task_id);
   `);
 
   // FTS5 must be created separately (no IF NOT EXISTS support in some SQLite versions)

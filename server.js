@@ -55,6 +55,10 @@ function getTaskWithDetails(db, taskId) {
   // Parse JSON fields
   if (task.pr_urls) { try { task.pr_urls = JSON.parse(task.pr_urls); } catch (_) { task.pr_urls = []; } }
   if (task.notify_channels) { try { task.notify_channels = JSON.parse(task.notify_channels); } catch (_) { task.notify_channels = []; } }
+  // Attach documents
+  task.documents = db.prepare(
+    'SELECT id, title, content_type, author, created_at, updated_at FROM documents WHERE task_id = ? ORDER BY created_at DESC'
+  ).all(taskId);
   return task;
 }
 
@@ -206,6 +210,11 @@ app.get('/projects/:id', (req, res) => {
     SELECT * FROM activity_log WHERE project_id = ?
     ORDER BY created_at DESC LIMIT 10
   `).all(project.id);
+
+  // Documents
+  project.documents = db.prepare(
+    'SELECT id, title, content_type, author, created_at, updated_at FROM documents WHERE project_id = ? AND task_id IS NULL ORDER BY created_at DESC'
+  ).all(project.id);
 
   // Legacy latest_status
   project.latest_status = db.prepare(
@@ -625,6 +634,120 @@ app.get('/tasks/:id/activity', (req, res) => {
   ).all(task.id, limit);
 
   res.json(activity);
+});
+
+// ─── Documents ────────────────────────────────────────────────────────────────
+
+// GET /projects/:id/docs — List project documents
+app.get('/projects/:id/docs', (req, res) => {
+  const db = getDb();
+  if (!db.prepare('SELECT id FROM projects WHERE id = ?').get(req.params.id)) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  const docs = db.prepare(
+    'SELECT * FROM documents WHERE project_id = ? AND task_id IS NULL ORDER BY created_at DESC'
+  ).all(req.params.id);
+  res.json(docs);
+});
+
+// GET /tasks/:id/docs — List task documents
+app.get('/tasks/:id/docs', (req, res) => {
+  const db = getDb();
+  if (!db.prepare('SELECT id FROM tasks WHERE id = ? AND deleted_at IS NULL').get(req.params.id)) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  const docs = db.prepare(
+    'SELECT * FROM documents WHERE task_id = ? ORDER BY created_at DESC'
+  ).all(req.params.id);
+  res.json(docs);
+});
+
+// POST /projects/:id/docs — Attach document to project
+app.post('/projects/:id/docs', (req, res) => {
+  const db = getDb();
+  const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Not found' });
+
+  const { title, content, content_type, author } = req.body || {};
+  if (!title)   return res.status(400).json({ error: 'title is required' });
+  if (!content) return res.status(400).json({ error: 'content is required' });
+
+  const result = db.prepare(`
+    INSERT INTO documents (project_id, task_id, title, content, content_type, author)
+    VALUES (?, NULL, ?, ?, ?, ?)
+  `).run(req.params.id, title, content, content_type || 'markdown', author || null);
+
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid);
+
+  // Index document content in FTS5
+  const { indexDocument } = require('./search');
+  indexDocument(db, doc);
+
+  res.status(201).json(doc);
+});
+
+// POST /tasks/:id/docs — Attach document to task
+app.post('/tasks/:id/docs', (req, res) => {
+  const db = getDb();
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL').get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Not found' });
+
+  const { title, content, content_type, author } = req.body || {};
+  if (!title)   return res.status(400).json({ error: 'title is required' });
+  if (!content) return res.status(400).json({ error: 'content is required' });
+
+  const result = db.prepare(`
+    INSERT INTO documents (project_id, task_id, title, content, content_type, author)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(task.project_id, task.id, title, content, content_type || 'markdown', author || null);
+
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid);
+
+  const { indexDocument } = require('./search');
+  indexDocument(db, doc);
+
+  res.status(201).json(doc);
+});
+
+// GET /docs/:id — Get document
+app.get('/docs/:id', (req, res) => {
+  const db = getDb();
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  res.json(doc);
+});
+
+// PUT /docs/:id — Update document
+app.put('/docs/:id', (req, res) => {
+  const db = getDb();
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+
+  const fields = ["updated_at = datetime('now')"];
+  const params = [];
+  const b = req.body || {};
+  if (b.title !== undefined)        { fields.push('title = ?');        params.push(b.title); }
+  if (b.content !== undefined)      { fields.push('content = ?');      params.push(b.content); }
+  if (b.content_type !== undefined) { fields.push('content_type = ?'); params.push(b.content_type); }
+
+  if (fields.length > 1) {
+    params.push(doc.id);
+    db.prepare(`UPDATE documents SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  const updated = db.prepare('SELECT * FROM documents WHERE id = ?').get(doc.id);
+  const { indexDocument } = require('./search');
+  indexDocument(db, updated);
+  res.json(updated);
+});
+
+// DELETE /docs/:id — Delete document
+app.delete('/docs/:id', (req, res) => {
+  const db = getDb();
+  db.prepare('DELETE FROM documents WHERE id = ?').run(req.params.id);
+  const { removeFromIndex } = require('./search');
+  removeFromIndex(getDb(), 'document', req.params.id);
+  res.json({ success: true });
 });
 
 // ─── Activity Feed ────────────────────────────────────────────────────────────

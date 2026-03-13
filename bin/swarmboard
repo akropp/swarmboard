@@ -752,6 +752,88 @@ program
     console.log(`Swarmboard server at ${getBaseUrl()} — ${health.status} (${health.timestamp})`);
   });
 
+// ─── Documents ────────────────────────────────────────────────────────────────
+
+const docs = program.command('doc').description('Manage project/task documents');
+
+docs
+  .command('add <target-type> <target-id> <title>')
+  .description('Attach a document. target-type: project or task')
+  .option('--content <text>', 'Document content (markdown)')
+  .option('--file <path>', 'Read content from file')
+  .option('--author <name>', 'Author name')
+  .option('--json', 'JSON output')
+  .action(async (targetType, targetId, title, opts) => {
+    let content = opts.content;
+    if (opts.file) {
+      content = require('fs').readFileSync(opts.file, 'utf8');
+    }
+    if (!content) {
+      console.error('Error: --content or --file is required');
+      process.exit(1);
+    }
+    const endpoint = targetType === 'project'
+      ? `/projects/${targetId}/docs`
+      : `/tasks/${targetId}/docs`;
+    const doc = await api('POST', endpoint, { title, content, author: opts.author });
+    if (opts.json) return print(doc);
+    console.log(`Document #${doc.id} "${doc.title}" attached to ${targetType} ${targetId}`);
+  });
+
+docs
+  .command('list <target-type> <target-id>')
+  .description('List documents for a project or task')
+  .option('--json', 'JSON output')
+  .action(async (targetType, targetId, opts) => {
+    const endpoint = targetType === 'project'
+      ? `/projects/${targetId}/docs`
+      : `/tasks/${targetId}/docs`;
+    const list = await api('GET', endpoint);
+    if (opts.json) return print(list);
+    if (!list.length) return console.log('No documents.');
+    for (const d of list) {
+      console.log(`  #${d.id}  ${d.title}  (${d.content_type}, ${fmtDate(d.created_at)}${d.author ? ` by ${d.author}` : ''})`);
+    }
+  });
+
+docs
+  .command('get <doc-id>')
+  .description('View a document')
+  .option('--json', 'JSON output')
+  .action(async (docId, opts) => {
+    const doc = await api('GET', `/docs/${docId}`);
+    if (opts.json) return print(doc);
+    console.log(`─── ${doc.title} ───`);
+    if (doc.author) console.log(`Author: ${doc.author}  |  Created: ${fmtDate(doc.created_at)}`);
+    console.log('');
+    console.log(doc.content);
+  });
+
+docs
+  .command('update <doc-id>')
+  .description('Update a document')
+  .option('--title <title>', 'New title')
+  .option('--content <text>', 'New content')
+  .option('--file <path>', 'Read new content from file')
+  .option('--json', 'JSON output')
+  .action(async (docId, opts) => {
+    const body = {};
+    if (opts.title) body.title = opts.title;
+    if (opts.file) body.content = require('fs').readFileSync(opts.file, 'utf8');
+    else if (opts.content) body.content = opts.content;
+    const doc = await api('PUT', `/docs/${docId}`, body);
+    if (opts.json) return print(doc);
+    console.log(`Document #${doc.id} updated.`);
+  });
+
+docs
+  .command('delete <doc-id>')
+  .description('Delete a document')
+  .action(async (docId) => {
+    await api('DELETE', `/docs/${docId}`);
+    console.log(`Document #${docId} deleted.`);
+  });
+
 // ─── Run ──────────────────────────────────────────────────────────────────────
 
 program.parse();

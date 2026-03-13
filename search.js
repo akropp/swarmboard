@@ -38,6 +38,21 @@ function indexTask(db, task) {
   );
 }
 
+// Insert or replace a document in the search index
+function indexDocument(db, doc) {
+  db.prepare('DELETE FROM search_index WHERE entity_type = ? AND entity_id = ?')
+    .run('document', String(doc.id));
+  db.prepare(
+    'INSERT INTO search_index (entity_type, entity_id, project_id, title, body) VALUES (?, ?, ?, ?, ?)'
+  ).run(
+    'document',
+    String(doc.id),
+    doc.project_id,
+    doc.title || '',
+    buildBody(doc.content)
+  );
+}
+
 // Remove an entity from the search index
 function removeFromIndex(db, entityType, entityId) {
   db.prepare('DELETE FROM search_index WHERE entity_type = ? AND entity_id = ?')
@@ -69,8 +84,15 @@ function rebuildIndex(db) {
     buildBody(t.description, t.notes, t.deliverables)
   ]);
 
-  insertMany([...projectRows, ...taskRows]);
-  return { projects: projectRows.length, tasks: taskRows.length };
+  const docs = db.prepare('SELECT * FROM documents').all();
+  const docRows = docs.map(d => [
+    'document', String(d.id), d.project_id,
+    d.title || '',
+    buildBody(d.content)
+  ]);
+
+  insertMany([...projectRows, ...taskRows, ...docRows]);
+  return { projects: projectRows.length, tasks: taskRows.length, documents: docRows.length };
 }
 
 // Full-text search
@@ -121,4 +143,4 @@ function search(query, { type, status, projectId, limit = 50 } = {}) {
   return results;
 }
 
-module.exports = { indexProject, indexTask, removeFromIndex, rebuildIndex, search };
+module.exports = { indexProject, indexTask, indexDocument, removeFromIndex, rebuildIndex, search };
