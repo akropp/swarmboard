@@ -1,6 +1,25 @@
 import { html, useState, useEffect } from 'https://esm.sh/htm/preact/standalone';
 import { StatusBadge, PriorityBadge, Spinner, ErrorAlert, relativeTime, apiFetch } from './common.js';
 
+function renderMarkdown(md) {
+  if (!md) return '';
+  return md
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-gray-900 border border-border rounded-lg p-4 my-3 overflow-x-auto text-sm"><code>$2</code></pre>')
+    .replace(/`([^`]+)`/g, '<code class="bg-gray-800 px-1.5 py-0.5 rounded text-sm text-accent">$1</code>')
+    .replace(/^#### (.+)$/gm, '<h4 class="text-base font-semibold mt-4 mb-2">$1</h4>')
+    .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold mt-5 mb-2">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold mt-6 mb-3">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold mt-6 mb-3">$1</h1>')
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-accent hover:underline">$1</a>')
+    .replace(/^- (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+    .replace(/^---$/gm, '<hr class="border-border my-4">')
+    .replace(/\n\n/g, '</p><p class="mb-2">')
+    .replace(/\n/g, '<br>');
+}
+
 export function TaskDetailModal({ taskId, onClose, onUpdated }) {
   const [task, setTask] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -9,6 +28,7 @@ export function TaskDetailModal({ taskId, onClose, onUpdated }) {
   const [commentText, setCommentText] = useState('');
   const [commentAuthor, setCommentAuthor] = useState('');
   const [posting, setPosting] = useState(false);
+  const [viewingDoc, setViewingDoc] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -159,6 +179,31 @@ export function TaskDetailModal({ taskId, onClose, onUpdated }) {
               </div>
             `}
 
+            <!-- Documents -->
+            ${task.documents?.length > 0 && html`
+              <div>
+                <h4 class="text-xs text-muted uppercase mb-2">Documents (${task.documents.length})</h4>
+                <div class="space-y-2">
+                  ${task.documents.map(d => html`
+                    <div key=${d.id}
+                         class="flex items-center justify-between p-3 bg-bg rounded-lg border border-border hover:border-gray-500 cursor-pointer transition-colors"
+                         onclick=${async () => {
+                           const full = await apiFetch('GET', '/docs/' + d.id);
+                           setViewingDoc(full);
+                         }}>
+                      <div class="flex items-center gap-2">
+                        <span class="text-muted">📄</span>
+                        <span class="text-sm font-medium">${d.title}</span>
+                      </div>
+                      <div class="text-xs text-muted">
+                        ${d.author ? d.author + ' · ' : ''}${relativeTime(d.created_at)}
+                      </div>
+                    </div>
+                  `)}
+                </div>
+              </div>
+            `}
+
             <!-- Activity thread -->
             <div>
               <h4 class="text-xs text-muted uppercase mb-3">Activity</h4>
@@ -204,6 +249,25 @@ export function TaskDetailModal({ taskId, onClose, onUpdated }) {
             </div>
           </div>
         ` : null}
+
+        ${viewingDoc && html`
+          <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70" onclick=${e => e.target === e.currentTarget && setViewingDoc(null)}>
+            <div class="bg-card border border-border rounded-xl w-full max-w-3xl max-h-[85vh] shadow-2xl flex flex-col">
+              <div class="flex items-center justify-between p-5 border-b border-border">
+                <div>
+                  <h2 class="text-lg font-semibold">${viewingDoc.title}</h2>
+                  <p class="text-xs text-muted mt-0.5">
+                    ${viewingDoc.author ? 'By ' + viewingDoc.author + ' · ' : ''}${relativeTime(viewingDoc.created_at)}
+                  </p>
+                </div>
+                <button onclick=${() => setViewingDoc(null)} class="text-muted hover:text-white text-xl px-2">✕</button>
+              </div>
+              <div class="p-6 overflow-y-auto text-sm leading-relaxed"
+                   dangerouslySetInnerHTML=${{ __html: '<p class="mb-2">' + renderMarkdown(viewingDoc.content) + '</p>' }}>
+              </div>
+            </div>
+          </div>
+        `}
       </div>
     </div>
   `;
